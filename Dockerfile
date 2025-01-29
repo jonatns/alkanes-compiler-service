@@ -5,6 +5,7 @@ RUN apt-get update && apt-get install -y \
     clang \
     llvm \
     build-essential \
+    clang-tools \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js
