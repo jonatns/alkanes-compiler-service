@@ -7,6 +7,7 @@ app = 'alkanes-compiler-service'
 primary_region = 'iad'
 
 [build]
+  DEBUG = true
 
 [http_service]
   internal_port = 3000
