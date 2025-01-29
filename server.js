@@ -10,7 +10,7 @@ import crypto from "crypto";
 const execAsync = promisify(exec);
 const app = express();
 
-const DEBUG = process.env.DEBUG === "true";
+const DEBUG = true;
 
 // Keep a pool of pre-created project directories
 const PROJECT_POOL_SIZE = 5;
