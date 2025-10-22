@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: alkanes-compiler-service
+    env: docker
+    plan: free
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 8080
+      - key: API_KEY
+        sync: false
+    disk:
+      name: cargo-cache
+      mountPath: /usr/local/cargo
+      sizeGB: 5

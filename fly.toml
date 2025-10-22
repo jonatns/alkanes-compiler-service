@@ -1,4 +1,4 @@
-# fly.toml app configuration file generated for alkanes-compiler-service on 2025-01-29T16:51:45-04:00
+# fly.toml app configuration file generated for alkanes-compiler-service on 2025-10-21T17:24:54-04:00
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
@@ -9,7 +9,7 @@ primary_region = 'iad'
 [build]
 
 [http_service]
-  internal_port = 3000
+  internal_port = 8080
   force_https = true
   auto_stop_machines = 'stop'
   auto_start_machines = true
@@ -17,6 +17,17 @@ primary_region = 'iad'
   processes = ['app']
 
 [[vm]]
-  memory = '1gb'
+  memory = '2gb'
   cpu_kind = 'shared'
   cpus = 1
+
+[[checks]]
+  type = "http"
+  name = "healthcheck"
+  interval = "10s"
+  timeout = "2s"
+  path = "/health"
+
+[experimental]
+  allowed_public_ports = []
+  auto_rollback = true

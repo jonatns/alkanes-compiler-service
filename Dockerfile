@@ -1,41 +1,30 @@
-FROM rust:1.84 AS builder
+FROM rust:1.90.0-bookworm
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    clang \
-    llvm \
-    build-essential \
-    clang-tools \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl git build-essential clang llvm pkg-config protobuf-compiler \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Node.js
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
-    apt-get install -y nodejs
-
-# Install WASM target
 RUN rustup target add wasm32-unknown-unknown
 
-# Create and move to app directory
+ENV CARGO_HOME=/usr/local/cargo
+ENV RUSTUP_HOME=/usr/local/rustup
+ENV PATH="${CARGO_HOME}/bin:${PATH}"
+
 WORKDIR /app
 
-# Copy server files
-COPY package.json .
-COPY server.js .
+COPY package*.json ./
 RUN npm install
 
-# Copy templates
-COPY templates ./templates
+COPY . .
+RUN npm run build
 
-# Pre-compile dependencies using template Cargo.toml
-RUN mkdir -p /opt/dependencies/src && \
-    cp templates/Cargo.toml /opt/dependencies/ && \
-    echo "fn main() {}" > /opt/dependencies/src/lib.rs && \
-    cd /opt/dependencies && \
-    cargo build --target wasm32-unknown-unknown --release && \
-    rm -rf src target
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
-# Expose port
-EXPOSE 3000
+ENV NODE_ENV=production
+ENV PORT=8080
+EXPOSE 8080
 
-# Start server
-CMD ["node", "server.js"]
+ENTRYPOINT ["/entrypoint.sh"]
