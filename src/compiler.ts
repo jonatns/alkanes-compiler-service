@@ -2,11 +2,11 @@ import PQueue from "p-queue";
 import { logger } from "./utils/logger.js";
 
 const queue = new PQueue({ concurrency: 2 });
-const BASE_DIR = "/mnt/builds";
+const BASE_DIR = "/tmp/builds";
 
 import { exec, spawn } from "child_process";
 import { promisify } from "util";
-import fs from "fs/promises";
+import fs, { readdir } from "fs/promises";
 import path from "path";
 import { nanoid } from "nanoid";
 import { gzipWasm } from "./utils/gzip.js";
@@ -17,6 +17,8 @@ import {
   StorageKey,
 } from "./types.js";
 import { cargoTemplate } from "./templates.js";
+
+const CARGO_CACHE_DIR = "/mnt/cache/target";
 
 const execAsync = promisify(exec);
 
@@ -40,12 +42,7 @@ export class AlkanesCompiler {
     return new Promise<void>((resolve, reject) => {
       const cargo = spawn(
         "cargo",
-        [
-          "build",
-          "--target=wasm32-unknown-unknown",
-          "--release",
-          "--target-dir=/mnt/cache/target",
-        ],
+        ["build", "--target=wasm32-unknown-unknown", "--release"],
         {
           cwd: tempDir,
           env: process.env,
@@ -82,7 +79,6 @@ export class AlkanesCompiler {
       console.log(`🧱 Building in ${tempDir}`);
       await this.createProject(tempDir, sourceCode);
 
-      console.log(`🧱 Building in ${tempDir}`);
       console.log("⚙️  Running Cargo build...");
 
       await this.runCargoBuild(tempDir);
@@ -103,7 +99,7 @@ export class AlkanesCompiler {
       return { wasmBuffer, abi };
     } finally {
       if (this.cleanupAfter) {
-        await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+        // await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
       }
     }
   }

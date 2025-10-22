@@ -1,5 +1,5 @@
-export const cargoTemplate = `[package]
-name = "alkanes_contract"
+[package]
+name = "dummy_contract"
 version = "0.1.0"
 edition = "2021"
 
@@ -11,4 +11,3 @@ alkanes-runtime = { git = "https://github.com/kungfuflex/alkanes-rs" }
 alkanes-support = { git = "https://github.com/kungfuflex/alkanes-rs" }
 metashrew-support = { git = "https://github.com/sandshrewmetaprotocols/metashrew" }
 anyhow = "1.0"
-`;
