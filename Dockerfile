@@ -1,4 +1,4 @@
-FROM rust:1.90.0-bookworm-slim
+FROM rust:1.90.0-slim-bookworm
 
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     ca-certificates curl git build-essential clang llvm pkg-config protobuf-compiler && \
