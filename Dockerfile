@@ -15,7 +15,7 @@ ENV PATH="${CARGO_HOME}/bin:${PATH}"
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm install
+RUN npm ci
 
 COPY . .
 RUN npm run build
