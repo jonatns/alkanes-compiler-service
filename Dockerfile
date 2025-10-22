@@ -1,16 +1,24 @@
-FROM rust:1.90.0-bookworm
+FROM rust:1.90.0-bookworm-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl git build-essential clang llvm pkg-config protobuf-compiler \
-    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
+    ca-certificates curl git build-essential clang llvm pkg-config protobuf-compiler && \
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get install -y nodejs && \
+    rm -rf /var/lib/apt/lists/*
 
 RUN rustup target add wasm32-unknown-unknown
+
+RUN cargo new --lib dummy && \
+    cd dummy && \
+    cargo build --target wasm32-unknown-unknown --release || true && \
+    cd .. && rm -rf dummy
 
 ENV CARGO_HOME=/usr/local/cargo
 ENV RUSTUP_HOME=/usr/local/rustup
 ENV PATH="${CARGO_HOME}/bin:${PATH}"
+ENV CARGO_TARGET_DIR=/mnt/cache/target
+ENV NODE_ENV=production
+ENV PORT=8080
 
 WORKDIR /app
 
@@ -20,11 +28,8 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN chmod +x ./entrypoint.sh
 
-ENV NODE_ENV=production
-ENV PORT=8080
 EXPOSE 8080
 
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["./entrypoint.sh"]

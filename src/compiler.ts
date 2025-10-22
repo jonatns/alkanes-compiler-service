@@ -40,7 +40,12 @@ export class AlkanesCompiler {
     return new Promise<void>((resolve, reject) => {
       const cargo = spawn(
         "cargo",
-        ["build", "--target=wasm32-unknown-unknown", "--release"],
+        [
+          "build",
+          "--target=wasm32-unknown-unknown",
+          "--release",
+          "--target-dir=/mnt/cache/target",
+        ],
         {
           cwd: tempDir,
           env: process.env,
