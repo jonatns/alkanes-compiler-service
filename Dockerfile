@@ -17,8 +17,6 @@ ENV CARGO_HOME=/usr/local/cargo
 ENV RUSTUP_HOME=/usr/local/rustup
 ENV PATH="${CARGO_HOME}/bin:${PATH}"
 ENV CARGO_TARGET_DIR=/mnt/cache/target
-ENV NODE_ENV=production
-ENV PORT=8080
 
 WORKDIR /app
 
