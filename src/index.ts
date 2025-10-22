@@ -1,5 +1,5 @@
 import "dotenv/config";
-import express from "express";
+import express, { NextFunction, Request, Response } from "express";
 import { compileContract } from "./compiler.js";
 import { logger } from "./utils/logger.js";
 import crypto from "crypto";
@@ -10,11 +10,11 @@ const HOST = "0.0.0.0";
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 
-app.get("/health", (_req, res) => {
+app.get("/health", (_req: Request, res: Response) => {
   res.json({ ok: true, timestamp: Date.now() });
 });
 
-app.post("/compile", async (req, res) => {
+app.post("/compile", async (req: Request, res: Response) => {
   const auth = req.headers.authorization;
   if (auth !== `Bearer ${process.env.API_KEY}`) {
     logger.warn({ event: "unauthorized", ip: req.ip });
@@ -46,7 +46,7 @@ app.post("/compile", async (req, res) => {
   }
 });
 
-app.use((err: any, _req: any, res: any, _next: any) => {
+app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
   const errorId = crypto.randomUUID();
   logger.error({ event: "unhandled:error", errorId, err });
   res.status(500).json({ error: "Internal Server Error", errorId });
