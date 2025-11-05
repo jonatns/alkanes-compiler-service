@@ -13,20 +13,24 @@ import {
 import { cargoTemplate } from "./templates.js";
 
 const queue = new PQueue({ concurrency: 2 });
+
+// Where source projects are created
 const BASE_DIR = "/tmp/builds";
-const CARGO_CACHE_DIR = "/mnt/cache/target";
+
+// Root cache dir on host (mounted). Each build gets its own subdir here.
+const CARGO_TARGET_ROOT = "/mnt/cache/target";
 
 export class AlkanesCompiler {
   private baseDir: string;
   private cleanupAfter: boolean;
-  private currentSourceHash?: string;
 
   constructor(options?: { baseDir?: string; cleanup?: boolean }) {
-    this.baseDir = options?.baseDir ?? path.join(process.cwd(), ".labcoat");
+    this.baseDir = options?.baseDir ?? BASE_DIR;
     this.cleanupAfter = options?.cleanup ?? true;
   }
 
-  private async getTempDir(sourceCode: string) {
+  /** Deterministic build dir based on the contract source hash */
+  private async getBuildDirForSource(sourceCode: string) {
     const hash = crypto
       .createHash("sha256")
       .update(sourceCode)
@@ -34,13 +38,16 @@ export class AlkanesCompiler {
       .slice(0, 12);
     const dir = path.join(this.baseDir, `build_${hash}`);
     await fs.mkdir(dir, { recursive: true });
-    return dir;
+    return { dir, hash };
   }
 
-  async runCargoBuild(
+  /** Run `cargo build` with sccache, using an isolated per-hash target dir */
+  private async runCargoBuild(
     tempDir: string,
-    extraEnv: Record<string, string> = {}
+    targetDir: string
   ): Promise<void> {
+    await fs.mkdir(targetDir, { recursive: true });
+
     return new Promise<void>((resolve, reject) => {
       const cargo = spawn(
         "cargo",
@@ -49,9 +56,9 @@ export class AlkanesCompiler {
           cwd: tempDir,
           env: {
             ...process.env,
-            ...extraEnv,
             RUSTC_WRAPPER: "/usr/local/cargo/bin/sccache",
             SCCACHE_DIR: "/mnt/cache/sccache",
+            CARGO_TARGET_DIR: targetDir, // per-hash, prevents races while still hot via sccache
           },
         }
       );
@@ -80,24 +87,23 @@ export class AlkanesCompiler {
     contractName: string,
     sourceCode: string
   ): Promise<{ wasmBuffer: Buffer; abi: AlkanesABI }> {
-    const tempDir = await this.getTempDir(sourceCode);
+    const { dir: tempDir, hash } = await this.getBuildDirForSource(sourceCode);
+    const targetDir = path.join(CARGO_TARGET_ROOT, `build_${hash}`);
 
     try {
-      console.log(`🧱 Building in ${tempDir}`);
+      logger.info({ event: "compile:prepare", tempDir, targetDir, hash });
+
       await this.createProject(tempDir, sourceCode);
 
-      console.log("⚙️  Running Cargo build...");
+      logger.info({ event: "compile:cargo_start", tempDir, targetDir });
+      await this.runCargoBuild(tempDir, targetDir);
+      logger.info({ event: "compile:cargo_done" });
 
-      await this.runCargoBuild(tempDir, {
-        CARGO_TARGET_DIR: CARGO_CACHE_DIR,
-        RUSTC_WRAPPER: "/usr/local/cargo/bin/sccache",
-      });
-
-      console.log("✅ Cargo build finished");
-
+      // Expect a fixed crate name. Ensure your cargoTemplate sets:
+      // [package] name = "alkanes_contract"
+      // [lib] crate-type = ["cdylib"]
       const wasmPath = path.join(
-        tempDir,
-        "target",
+        targetDir,
         "wasm32-unknown-unknown",
         "release",
         "alkanes_contract.wasm"
@@ -109,6 +115,7 @@ export class AlkanesCompiler {
       return { wasmBuffer, abi };
     } finally {
       if (this.cleanupAfter) {
+        // We keep targetDir (cache) but remove the small source dir to save space
         await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
       }
     }
