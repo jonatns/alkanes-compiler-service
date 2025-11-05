@@ -33,6 +33,7 @@ app.post("/compile", async (req: Request, res: Response) => {
       success: true,
       wasm: result?.wasmBuffer.toString("base64"),
       abi: result?.abi,
+      durationSeconds: result?.durationSeconds,
     });
   } catch (err) {
     const errorId = crypto.randomUUID();

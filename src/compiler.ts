@@ -3,7 +3,6 @@ import { logger } from "./utils/logger.js";
 import { spawn } from "child_process";
 import fs from "fs/promises";
 import path from "path";
-import crypto from "crypto";
 import {
   AlkanesABI,
   AlkanesInput,
@@ -256,7 +255,10 @@ export async function compileContract(contractName: string, code: string) {
         durationSeconds: duration,
         wasmSize: result?.wasmBuffer?.length || 0,
       });
-      return result;
+      return {
+        ...result,
+        durationSeconds: parseFloat(duration),
+      };
     } catch (err: any) {
       const duration = ((Date.now() - start) / 1000).toFixed(2);
       logger.error({
