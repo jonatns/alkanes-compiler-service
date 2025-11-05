@@ -11,34 +11,30 @@ import {
   StorageKey,
 } from "./types.js";
 import { cargoTemplate } from "./templates.js";
+import { stableHash } from "./utils/hashing.js";
 
 const queue = new PQueue({ concurrency: 2 });
 
 const BASE_DIR = "/tmp/builds";
 const ARTIFACTS_DIR = "/mnt/cache/artifacts";
-const CARGO_CACHE_DIR = "/mnt/cache/target";
+const CARGO_TARGET_ROOT = "/mnt/cache/target";
+const SCCACHE_DIR = "/mnt/cache/sccache";
 
 async function ensureDir(dir: string) {
   await fs.mkdir(dir, { recursive: true }).catch(() => {});
 }
 
-function stableHash(source: string): string {
-  const normalized = source
-    .replace(/\r\n/g, "\n")
-    .replace(/[ \t]+$/gm, "")
-    .replace(/\n{2,}/g, "\n")
-    .trim();
-
-  return crypto
-    .createHash("sha256")
-    .update(normalized)
-    .digest("hex")
-    .slice(0, 12);
+async function fileExists(p: string) {
+  try {
+    await fs.access(p);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-// --- Global in-memory build lock registry ---
+// --- Global in-memory build lock registry (single-node) ---
 const buildLocks = new Map<string, Promise<any>>();
-
 async function withBuildLock<T>(
   hash: string,
   fn: () => Promise<T>
@@ -47,7 +43,6 @@ async function withBuildLock<T>(
     logger.info({ event: "build:dedup", hash });
     return await buildLocks.get(hash)!;
   }
-
   const promise = fn().finally(() => buildLocks.delete(hash));
   buildLocks.set(hash, promise);
   return await promise;
@@ -63,7 +58,7 @@ export class AlkanesCompiler {
   }
 
   private async getBuildDir(sourceCode: string) {
-    const hash = stableHash(sourceCode);
+    const hash = stableHash(sourceCode); // normalized hash (ignores trivial whitespace/newlines)
     const dir = path.join(this.baseDir, `build_${hash}`);
     await ensureDir(dir);
     return { dir, hash };
@@ -71,15 +66,22 @@ export class AlkanesCompiler {
 
   private async runCargoBuild(
     tempDir: string,
-    extraEnv: Record<string, string> = {}
+    targetDir: string
   ): Promise<void> {
+    await ensureDir(targetDir);
+
     return new Promise<void>((resolve, reject) => {
       const cargo = spawn(
         "cargo",
         ["build", "--target=wasm32-unknown-unknown", "--release"],
         {
           cwd: tempDir,
-          env: { ...process.env, ...extraEnv },
+          env: {
+            ...process.env,
+            RUSTC_WRAPPER: "/usr/local/cargo/bin/sccache",
+            SCCACHE_DIR,
+            CARGO_TARGET_DIR: targetDir, // per-hash target dir (no cross-build races)
+          },
         }
       );
 
@@ -108,52 +110,61 @@ export class AlkanesCompiler {
     sourceCode: string
   ): Promise<{ wasmBuffer: Buffer; abi: AlkanesABI }> {
     const { dir: tempDir, hash } = await this.getBuildDir(sourceCode);
-    await ensureDir(ARTIFACTS_DIR);
-
+    const targetDir = path.join(CARGO_TARGET_ROOT, `build_${hash}`);
+    const crateName = `alkanes_contract_${hash}`;
     const wasmOut = path.join(ARTIFACTS_DIR, `${hash}.wasm`);
     const abiOut = path.join(ARTIFACTS_DIR, `${hash}.abi.json`);
 
-    // 🔁 Reuse cached artifacts if they exist
-    if (await this.fileExists(wasmOut)) {
+    await ensureDir(ARTIFACTS_DIR);
+
+    // 🔁 Artifact cache hit (wasm already compiled)
+    if (await fileExists(wasmOut)) {
       logger.info({ event: "compile:cache_hit", hash });
       const wasmBuffer = await fs.readFile(wasmOut);
-      const abi = JSON.parse(await fs.readFile(abiOut, "utf8"));
+      let abi: AlkanesABI;
+      if (await fileExists(abiOut)) {
+        abi = JSON.parse(await fs.readFile(abiOut, "utf8"));
+      } else {
+        // Backfill ABI if missing
+        abi = await this.parseABI(sourceCode);
+        await fs.writeFile(abiOut, JSON.stringify(abi, null, 2));
+      }
       return { wasmBuffer, abi };
     }
 
+    // 🔒 Deduplicate concurrent builds for identical source
     return await withBuildLock(hash, async () => {
-      // Check again inside lock (another builder may have finished)
-      if (await this.fileExists(wasmOut)) {
+      // Double-check inside lock in case another request finished meanwhile
+      if (await fileExists(wasmOut)) {
         logger.info({ event: "compile:cache_hit_after_lock", hash });
         const wasmBuffer = await fs.readFile(wasmOut);
         const abi = JSON.parse(await fs.readFile(abiOut, "utf8"));
         return { wasmBuffer, abi };
       }
 
-      logger.info({ event: "compile:start_build", hash, tempDir });
-      await this.createProject(tempDir, sourceCode);
+      logger.info({ event: "compile:start_build", hash, tempDir, targetDir });
+      await this.createProject(tempDir, sourceCode, crateName);
 
-      await this.runCargoBuild(tempDir, {
-        CARGO_TARGET_DIR: CARGO_CACHE_DIR,
-        RUSTC_WRAPPER: "/usr/local/cargo/bin/sccache",
-      });
+      await this.runCargoBuild(tempDir, targetDir);
 
+      // ✅ Read wasm from the per-hash target dir with hash-based crate name
       const wasmPath = path.join(
-        tempDir,
-        "target",
+        targetDir,
         "wasm32-unknown-unknown",
         "release",
-        "alkanes_contract.wasm"
+        `${crateName}.wasm`
       );
 
       const wasmBuffer = await fs.readFile(wasmPath);
       const abi = await this.parseABI(sourceCode);
 
+      // Store artifacts for future identical requests
       await fs.writeFile(wasmOut, wasmBuffer);
       await fs.writeFile(abiOut, JSON.stringify(abi, null, 2));
 
       logger.info({ event: "compile:done", hash, wasmSize: wasmBuffer.length });
 
+      // Clean up only the source workspace; keep targetDir (cache) and artifacts
       if (this.cleanupAfter) {
         await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
       }
@@ -162,19 +173,19 @@ export class AlkanesCompiler {
     });
   }
 
-  private async createProject(tempDir: string, sourceCode: string) {
+  private async createProject(
+    tempDir: string,
+    sourceCode: string,
+    crateName: string
+  ) {
     await ensureDir(path.join(tempDir, "src"));
-    await fs.writeFile(path.join(tempDir, "Cargo.toml"), cargoTemplate);
+    // Replace the default crate name in the Cargo template with a hash-suffixed one to prevent filename collisions.
+    const cargoToml = cargoTemplate.replace(
+      /name\s*=\s*"alkanes_contract"/,
+      `name = "${crateName}"`
+    );
+    await fs.writeFile(path.join(tempDir, "Cargo.toml"), cargoToml);
     await fs.writeFile(path.join(tempDir, "src", "lib.rs"), sourceCode);
-  }
-
-  private async fileExists(p: string) {
-    try {
-      await fs.access(p);
-      return true;
-    } catch {
-      return false;
-    }
   }
 
   public async parseABI(sourceCode: string): Promise<AlkanesABI> {
