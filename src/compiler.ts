@@ -1,7 +1,6 @@
 import PQueue from "p-queue";
 import { logger } from "./utils/logger.js";
-import { exec, spawn } from "child_process";
-import { promisify } from "util";
+import { spawn } from "child_process";
 import fs from "fs/promises";
 import path from "path";
 import crypto from "crypto";
@@ -16,7 +15,6 @@ import { cargoTemplate } from "./templates.js";
 const queue = new PQueue({ concurrency: 2 });
 const BASE_DIR = "/tmp/builds";
 const CARGO_CACHE_DIR = "/mnt/cache/target";
-const execAsync = promisify(exec);
 
 export class AlkanesCompiler {
   private baseDir: string;
@@ -28,11 +26,13 @@ export class AlkanesCompiler {
     this.cleanupAfter = options?.cleanup ?? true;
   }
 
-  private async getTempDir() {
-    // Deterministic build directory based on source hash
-    const sourceHash =
-      this.currentSourceHash || crypto.randomBytes(6).toString("hex");
-    const dir = path.join(this.baseDir, `build_${sourceHash}`);
+  private async getTempDir(sourceCode: string) {
+    const hash = crypto
+      .createHash("sha256")
+      .update(sourceCode)
+      .digest("hex")
+      .slice(0, 12);
+    const dir = path.join(this.baseDir, `build_${hash}`);
     await fs.mkdir(dir, { recursive: true });
     return dir;
   }
@@ -47,7 +47,12 @@ export class AlkanesCompiler {
         ["build", "--target=wasm32-unknown-unknown", "--release"],
         {
           cwd: tempDir,
-          env: { ...process.env, ...extraEnv },
+          env: {
+            ...process.env,
+            ...extraEnv,
+            RUSTC_WRAPPER: "/usr/local/cargo/bin/sccache",
+            SCCACHE_DIR: "/mnt/cache/sccache",
+          },
         }
       );
 
@@ -75,14 +80,7 @@ export class AlkanesCompiler {
     contractName: string,
     sourceCode: string
   ): Promise<{ wasmBuffer: Buffer; abi: AlkanesABI }> {
-    // Compute deterministic hash from source code
-    this.currentSourceHash = crypto
-      .createHash("sha256")
-      .update(sourceCode)
-      .digest("hex")
-      .slice(0, 12);
-
-    const tempDir = await this.getTempDir();
+    const tempDir = await this.getTempDir(sourceCode);
 
     try {
       console.log(`🧱 Building in ${tempDir}`);
