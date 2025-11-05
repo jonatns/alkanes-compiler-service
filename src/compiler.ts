@@ -11,6 +11,7 @@ import {
   StorageKey,
 } from "./types.js";
 import { cargoTemplate } from "./templates.js";
+import { stableHash } from "./utils/hashing.js";
 
 const queue = new PQueue({ concurrency: 2 });
 
@@ -31,11 +32,7 @@ export class AlkanesCompiler {
 
   /** Deterministic build dir based on the contract source hash */
   private async getBuildDirForSource(sourceCode: string) {
-    const hash = crypto
-      .createHash("sha256")
-      .update(sourceCode)
-      .digest("hex")
-      .slice(0, 12);
+    const hash = stableHash(sourceCode);
     const dir = path.join(this.baseDir, `build_${hash}`);
     await fs.mkdir(dir, { recursive: true });
     return { dir, hash };
