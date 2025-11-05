@@ -19,7 +19,11 @@ primary_region = 'iad'
 [[vm]]
   memory = '2gb'
   cpu_kind = 'shared'
-  cpus = 1
+  cpus = 2
+
+[[mounts]]
+  source = "cache_volume"
+  destination = "/mnt/cache"
 
 [[checks]]
   type = "http"
@@ -27,7 +31,3 @@ primary_region = 'iad'
   interval = "10s"
   timeout = "2s"
   path = "/health"
-
-[experimental]
-  allowed_public_ports = []
-  auto_rollback = true

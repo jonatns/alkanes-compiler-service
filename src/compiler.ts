@@ -99,7 +99,7 @@ export class AlkanesCompiler {
       return { wasmBuffer, abi };
     } finally {
       if (this.cleanupAfter) {
-        // await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+        await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
       }
     }
   }
