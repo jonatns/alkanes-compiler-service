@@ -1,15 +1,10 @@
 import PQueue from "p-queue";
 import { logger } from "./utils/logger.js";
-
-const queue = new PQueue({ concurrency: 2 });
-const BASE_DIR = "/tmp/builds";
-
 import { exec, spawn } from "child_process";
 import { promisify } from "util";
-import fs, { readdir } from "fs/promises";
+import fs from "fs/promises";
 import path from "path";
-import { nanoid } from "nanoid";
-import { gzipWasm } from "./utils/gzip.js";
+import crypto from "crypto";
 import {
   AlkanesABI,
   AlkanesInput,
@@ -18,13 +13,15 @@ import {
 } from "./types.js";
 import { cargoTemplate } from "./templates.js";
 
+const queue = new PQueue({ concurrency: 2 });
+const BASE_DIR = "/tmp/builds";
 const CARGO_CACHE_DIR = "/mnt/cache/target";
-
 const execAsync = promisify(exec);
 
 export class AlkanesCompiler {
   private baseDir: string;
   private cleanupAfter: boolean;
+  private currentSourceHash?: string;
 
   constructor(options?: { baseDir?: string; cleanup?: boolean }) {
     this.baseDir = options?.baseDir ?? path.join(process.cwd(), ".labcoat");
@@ -32,20 +29,25 @@ export class AlkanesCompiler {
   }
 
   private async getTempDir() {
-    const id = nanoid(10);
-    const dir = path.join(this.baseDir, `build_${id}`);
+    // Deterministic build directory based on source hash
+    const sourceHash =
+      this.currentSourceHash || crypto.randomBytes(6).toString("hex");
+    const dir = path.join(this.baseDir, `build_${sourceHash}`);
     await fs.mkdir(dir, { recursive: true });
     return dir;
   }
 
-  async runCargoBuild(tempDir: string) {
+  async runCargoBuild(
+    tempDir: string,
+    extraEnv: Record<string, string> = {}
+  ): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       const cargo = spawn(
         "cargo",
         ["build", "--target=wasm32-unknown-unknown", "--release"],
         {
           cwd: tempDir,
-          env: process.env,
+          env: { ...process.env, ...extraEnv },
         }
       );
 
@@ -55,7 +57,7 @@ export class AlkanesCompiler {
 
       cargo.stderr.on("data", (data) => {
         const text = data.toString().trim();
-        const isRealError = /error(\[E\d+\])?:/i.test(text); // match e.g. "error[E0433]:" or "error:"
+        const isRealError = /error(\[E\d+\])?:/i.test(text);
         logger[isRealError ? "error" : "info"]({
           event: "cargo:stderr",
           message: text,
@@ -73,6 +75,13 @@ export class AlkanesCompiler {
     contractName: string,
     sourceCode: string
   ): Promise<{ wasmBuffer: Buffer; abi: AlkanesABI }> {
+    // Compute deterministic hash from source code
+    this.currentSourceHash = crypto
+      .createHash("sha256")
+      .update(sourceCode)
+      .digest("hex")
+      .slice(0, 12);
+
     const tempDir = await this.getTempDir();
 
     try {
@@ -81,7 +90,10 @@ export class AlkanesCompiler {
 
       console.log("⚙️  Running Cargo build...");
 
-      await this.runCargoBuild(tempDir);
+      await this.runCargoBuild(tempDir, {
+        CARGO_TARGET_DIR: CARGO_CACHE_DIR,
+        RUSTC_WRAPPER: "/usr/local/cargo/bin/sccache",
+      });
 
       console.log("✅ Cargo build finished");
 
